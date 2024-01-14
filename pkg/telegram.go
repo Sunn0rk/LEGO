@@ -1,4 +1,4 @@
-package telegram_bot
+package telegram
 
 import (
 	"fmt"
@@ -22,7 +22,7 @@ var bot *tgbotapi.BotAPI
 // 		tgbotapi.NewInlineKeyboardButtonData("Скажи пока", "buy"),
 // 	),
 
-func (b *Telegram_bot) start_polling() {
+func (b *Telegram_bot) Start_polling() {
 	err := godotenv.Load(".env")
 	if err != nil {
 		log.Fatal(".env not loaded")

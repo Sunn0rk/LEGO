@@ -9,6 +9,6 @@ const (
 	password   = "9201"
 	driverName = "postgres"
 
-	TOKEN_NAME_IN_OS = "Lego_database_bot"
+	TOKEN_NAME_IN_OS      = "Lego_database_bot"
 	UPDATE_CONFIG_TIMEOUT = 60
 )

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	_ "github.com/lib/pq"
@@ -139,7 +140,7 @@ func PartMerger(db *sql.DB, tablename string) {
 	}
 }
 
-func CreateLegoTable(db *sql.DB, tablename string) {
+func CreateLegoTable(db *sql.DB, tablename string) error {
 	query := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s(
 		part_num character varying(50) COLLATE pg_catalog."default" NOT NULL,
 		part_name character varying(2000) COLLATE pg_catalog."default" NOT NULL,
@@ -149,10 +150,10 @@ func CreateLegoTable(db *sql.DB, tablename string) {
 	)`, tablename)
 
 	_, err := db.Exec(query)
-
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
+	return nil
 }
 
 func UpadteInventory(db *sql.DB, part_num string, part_name string, color_id int, color_name string, quantity int, tablename string, mode string) {
@@ -180,19 +181,49 @@ func DeleteLegoTable(db *sql.DB, tablename string) {
 }
 
 func AddOrDeleteSet(update *tgbotapi.Update, updates tgbotapi.UpdatesChannel, move1 string, move2 string, mode string, db *sql.DB) {
+
 	msg := fmt.Sprintf("Введите номер набора для %s", move1)
 	gBot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, msg))
+
 	for update := range updates {
 		switch update.Message.Text {
+
 		case "/back":
 			return
+
 		default:
 			fmt.Print(update.Message.Text)
 			API_Connect(update.Message.Text, mode, db, tablename)
 			PartMerger(db, tablename)
-			msg = fmt.Sprintf("Введите номер набора для %s", move2)
-			gBot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, msg))
+			gBot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, move2))
 			return
 		}
 	}
+}
+
+func DatabaseConnect() (*sql.DB, error) {
+	fmt.Println(database, username, password, server, port)
+	connStr := fmt.Sprintf("%s://%s:%s@%s:%s/lego?sslmode=disable", database, username, password, server, port)
+	db, err = sql.Open(driverName, connStr)
+	fmt.Println(db)
+
+	if err != nil {
+		return db, err
+	}
+	return db, nil
+}
+
+func TGBotConnect() error {
+	fmt.Println("2")
+	_ = os.Setenv(TOKEN_NAME_IN_OS, "6842123718:AAGAhkDOdqUMTLuCzo4CkzPxXzpNil4VMj8")
+	fmt.Println("3")
+	gToken = os.Getenv(TOKEN_NAME_IN_OS)
+	fmt.Println("4")
+
+	// gBot.Debug = false
+	fmt.Println("5")
+	if err != nil {
+		return err
+	}
+	return nil
 }

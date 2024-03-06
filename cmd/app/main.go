@@ -9,6 +9,7 @@ import (
 	_ "github.com/lib/pq"
 )
 
+var tablename string
 var gBot *tgbotapi.BotAPI
 var gToken string
 var db *sql.DB
@@ -29,18 +30,10 @@ type Sets struct {
 }
 
 func init() {
-	fmt.Println("1")
 	TGBotConnect()
 	if gBot, err = tgbotapi.NewBotAPI(gToken); err != nil {
 		log.Panic(err)
 	}
-	db, err = DatabaseConnect()
-	if err == nil {
-		// defer db.Close()
-	} else {
-		log.Fatal(err)
-	}
-	err = CreateLegoTable(db, tablename)
 }
 
 func main() {
@@ -49,54 +42,98 @@ func main() {
 	updateConfig.Timeout = UPDATE_CONFIG_TIMEOUT
 	updates := gBot.GetUpdatesChan(updateConfig)
 
-Loop:
+expectation:
+	for update := range updates {
+
+		switch update.Message.Text {
+		case "/start":
+
+			gBot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Начали"))
+
+			db, err = DatabaseConnect()
+			if err == nil {
+			} else {
+				log.Panic(err)
+			}
+
+			tablename = fmt.Sprintf("InventoryTable_%d", update.Message.Chat.ID)
+			err = CreateLegoTable(db, tablename)
+			if err == nil {
+			} else {
+				log.Panic(err)
+			}
+
+			tablename = fmt.Sprintf("SetHistoryTable_%d", update.Message.Chat.ID)
+			err = CreateSetHistory(db, tablename)
+			if err == nil {
+			} else {
+				log.Panic(err)
+			}
+
+			goto MainLoop
+
+		default:
+			// gBot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Я не съебался"))
+			continue
+		}
+	}
+
+MainLoop:
+	for update := range updates {
+
+		switch update.Message.Text {
+		case "/stop":
+			gBot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Закончили"))
+			goto expectation
+
+		case "/inventory":
+			gBot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Добавить набор или убрать имеющийся?"))
+			goto CmdInventory
+
+		case "/compare":
+			gBot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Введите номер набора для сравнения"))
+			goto CmdCompare
+
+		default:
+			// gBot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Я съебался"))
+
+		}
+	}
+
+CmdInventory:
+	for update := range updates {
+		switch update.Message.Text {
+
+		case "/back":
+			gBot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Вернулся"))
+			goto MainLoop
+
+		case "/addset":
+			UpdateSetWindow(&update, updates, "добавления", "добавлено", "add", db)
+			goto MainLoop
+
+		case "/deleteset":
+			UpdateSetWindow(&update, updates, "удаления", "удалено", "delete", db)
+			goto MainLoop
+		default:
+			gBot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Неизвестный запрос"))
+		}
+
+	}
+
+CmdCompare:
 	for update := range updates {
 
 		switch update.Message.Text {
 
-		case "/inventory":
+		case "/back":
+			gBot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Вернулся"))
+			goto MainLoop
 
-			gBot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Добавить набор или убрать имеющийся?"))
-
-			for update := range updates {
-				switch update.Message.Text {
-
-				case "/back":
-					gBot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Вернулся"))
-					continue Loop
-
-				case "/addset":
-					AddOrDeleteSet(&update, updates, "добавления", "добавлено", "add", db)
-					continue Loop
-
-				case "/deleteset":
-					AddOrDeleteSet(&update, updates, "удалено", "удалено", "delete", db)
-					continue Loop
-				}
-			}
-
-		case "/compare":
-
-			gBot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Введите номер набора для сравнения"))
-
-			for update := range updates {
-
-				switch update.Message.Text {
-
-				case "/back":
-					gBot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Вернулся"))
-					continue Loop
-
-				default:
-					Compare(update.Message.Text, "add", db, tablename)
-				}
-			}
 		default:
-
-			gBot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Я съебался"))
-
+			tablename = fmt.Sprintf("InventoryTable_%d", update.Message.Chat.ID)
+			Compare(update.Message.Text, "add", db, tablename, &update)
 		}
-
 	}
 
 }

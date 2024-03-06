@@ -1,7 +1,6 @@
 package main
 
 const (
-	tablename  = "main_set"
 	server     = "localhost"
 	database   = "postgres"
 	port       = "5432"

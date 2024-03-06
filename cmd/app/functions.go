@@ -13,55 +13,56 @@ import (
 	_ "github.com/lib/pq"
 )
 
-func IsCompare(update *tgbotapi.Update) bool {
-	return update.Message != nil && update.Message.Text == "/Compare"
-}
-
-func Compare(setnum string, mode string, db *sql.DB, tablename string) {
-	setTable := "set_table"
-	compareTable := "compare_table"
+func Compare(setnum string, mode string, db *sql.DB, tablename string, update *tgbotapi.Update) {
+	setTable := fmt.Sprintf("%s_set", tablename)
+	compareTable := fmt.Sprintf("%s_compare", tablename)
 	DeleteLegoTable(db, setTable)
 	DeleteLegoTable(db, compareTable)
 	CreateLegoTable(db, setTable)
-	API_Connect(setnum, mode, db, setTable)
-	query := fmt.Sprintf(
-		`	CREATE TABLE IF NOT EXISTS %s(
+	check := API_Connect(setnum, mode, db, setTable)
+	switch check {
+	case 0:
+		gBot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Неверный номер набора"))
+		return
+	default:
+		query := fmt.Sprintf(
+			`	CREATE TABLE IF NOT EXISTS %s(
 		compare_part_num character varying(50) COLLATE pg_catalog."default" NOT NULL,
 		compare_part_name character varying(2000) COLLATE pg_catalog."default" NOT NULL,
 		compare_color_id smallint NOT NULL,
 		compare_color_name character varying(50) COLLATE pg_catalog."default" NOT NULL
-	)
-	TABLESPACE pg_default;
+		)
+		TABLESPACE pg_default;
 
-	INSERT INTO %s(compare_part_num, compare_part_name, compare_color_id, compare_color_name)
-	(
-		SELECT part_num, part_name, color_id, color_name 
-		FROM %s 
-		intersect 
-		SELECT part_num, part_name, color_id, color_name 
-		FROM %s
-	);
-	INSERT INTO %s(part_num, part_name, color_id, color_name, quantity)
-	(
-		SELECT compare_part_num, compare_part_name, compare_color_id, compare_color_name, -(quantity) 
-		FROM %s JOIN %s 
-		ON compare_part_num = part_num AND compare_part_name = part_name 
-		AND compare_color_id = color_id AND compare_color_name = color_name
-	);`, compareTable, compareTable, tablename, setTable, setTable, compareTable, tablename)
-	_, err := db.Exec(query)
+		INSERT INTO %s(compare_part_num, compare_part_name, compare_color_id, compare_color_name)
+		(
+			SELECT part_num, part_name, color_id, color_name 
+			FROM %s 
+			intersect 
+			SELECT part_num, part_name, color_id, color_name 
+			FROM %s
+		);
+		INSERT INTO %s(part_num, part_name, color_id, color_name, quantity)
+		(
+			SELECT compare_part_num, compare_part_name, compare_color_id, compare_color_name, -(quantity) 
+			FROM %s JOIN %s 
+			ON compare_part_num = part_num AND compare_part_name = part_name 
+			AND compare_color_id = color_id AND compare_color_name = color_name
+		);`, compareTable, compareTable, tablename, setTable, setTable, compareTable, tablename)
+		_, err := db.Exec(query)
 
-	if err != nil {
-		log.Fatal(err)
+		if err != nil {
+			log.Panic(err)
+		}
+		PartMerger(db, setTable)
 	}
-	PartMerger(db, setTable)
+
 }
 
-func API_Connect(setnum string, mode string, db *sql.DB, tablename string) {
+func API_Connect(setnum string, mode string, db *sql.DB, tablename string) (check int) {
 	url := fmt.Sprintf("https://rebrickable.com/api/v3/lego/sets/%s/parts/", setnum)
 	client := &http.Client{}
-	req, _ := http.NewRequest("GET", url, nil) // middleware
-
-	// брать значения из переменной окружения
+	req, _ := http.NewRequest("GET", url, nil)
 
 	req.Header.Set("Authorization", "key 67062c7b14264aedb5c8e9966c83df02")
 	req.Header.Set("Accept", "application/json")
@@ -75,35 +76,26 @@ func API_Connect(setnum string, mode string, db *sql.DB, tablename string) {
 
 	var set Sets
 	json.Unmarshal(bodyBytes, &set)
-	for _, count := range set.Results {
-		fmt.Printf("деталь: %s, цвет: %s ID цвета: %d, кол-во %d\n", count.Part.PartNum, count.Color.Name, count.Color.ID, count.Quantity)
-		UpadteInventory(db, count.Part.PartNum, count.Part.Name, count.Color.ID, count.Color.Name, count.Quantity, tablename, mode)
+	fmt.Println(set.Results)
+	check = len(set.Results)
+	if check == 0 {
 
+	} else {
+		for _, count := range set.Results {
+			// fmt.Printf("деталь: %s, цвет: %s ID цвета: %d, кол-во %d\n", count.Part.PartNum, count.Color.Name, count.Color.ID, count.Quantity)
+			UpadteInventory(db, count.Part.PartNum, count.Part.Name, count.Color.ID, count.Color.Name, count.Quantity, tablename, mode)
+		}
 	}
+
 	if err != nil {
 		fmt.Println(err)
 	}
-}
-
-func IsBack(update *tgbotapi.Update) bool {
-	return update.Message != nil && update.Message.Text == "/back"
-}
-
-func Inventory(update *tgbotapi.Update) bool {
-	return update.Message != nil && update.Message.Text == "/Inventory"
-}
-
-func AddSetInventory(update *tgbotapi.Update) bool {
-	return update.Message != nil && update.Message.Text == "/addset"
-}
-
-func DeleteSetInventory(update *tgbotapi.Update) bool {
-	return update.Message != nil && update.Message.Text == "/deleteset"
+	return check
 }
 
 func PartMerger(db *sql.DB, tablename string) {
-	query := fmt.Sprintf(`DROP TABLE IF EXISTS public.part_switch;
-	CREATE TABLE IF NOT EXISTS public.part_switch 
+	query := fmt.Sprintf(`DROP TABLE IF EXISTS public.%s_switch;
+	CREATE TABLE IF NOT EXISTS public.%s_switch 
 	(
     part_num character varying(50) COLLATE pg_catalog."default" NOT NULL,
     part_name character varying(2000) COLLATE pg_catalog."default" NOT NULL,
@@ -112,7 +104,7 @@ func PartMerger(db *sql.DB, tablename string) {
     quantity smallint NOT NULL
 	)
 	TABLESPACE pg_default;
-	INSERT INTO part_switch(part_num, part_name, color_id, color_name, quantity)
+	INSERT INTO %s_switch(part_num, part_name, color_id, color_name, quantity)
 	(
 	SELECT 
 	  part_num,
@@ -130,22 +122,22 @@ func PartMerger(db *sql.DB, tablename string) {
 	ORDER BY 
   	  part_num);
 	truncate %s;
-	INSERT INTO %s(part_num, part_name, color_id, color_name, quantity)(select * from part_switch);
-	DROP TABLE IF EXISTS public.part_switch;`, tablename, tablename, tablename)
+	INSERT INTO %s(part_num, part_name, color_id, color_name, quantity)(select * from %s_switch);
+	DROP TABLE IF EXISTS public.%s_switch;`, tablename, tablename, tablename, tablename, tablename, tablename, tablename, tablename)
 
 	_, err := db.Exec(query)
 
 	if err != nil {
-		log.Fatal(err)
+		log.Panic(err)
 	}
 }
 
 func CreateLegoTable(db *sql.DB, tablename string) error {
 	query := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s(
 		part_num character varying(50) COLLATE pg_catalog."default" NOT NULL,
-		part_name character varying(2000) COLLATE pg_catalog."default" NOT NULL,
+		part_name character varying(2000) COLLATE pg_catalog."default",
 		color_id smallint NOT NULL,
-		color_name character varying(50) COLLATE pg_catalog."default" NOT NULL,
+		color_name character varying(50) COLLATE pg_catalog."default",
 		quantity smallint NOT NULL
 	)`, tablename)
 
@@ -167,7 +159,7 @@ func UpadteInventory(db *sql.DB, part_num string, part_name string, color_id int
 	_, err := db.Exec(query, part_num, part_name, color_id, color_name, quantity)
 
 	if err != nil {
-		log.Fatal(err)
+		log.Panic(err)
 	}
 }
 
@@ -176,11 +168,11 @@ func DeleteLegoTable(db *sql.DB, tablename string) {
 	_, err := db.Exec(query)
 
 	if err != nil {
-		log.Fatal(err)
+		log.Panic(err)
 	}
 }
 
-func AddOrDeleteSet(update *tgbotapi.Update, updates tgbotapi.UpdatesChannel, move1 string, move2 string, mode string, db *sql.DB) {
+func UpdateSetWindow(update *tgbotapi.Update, updates tgbotapi.UpdatesChannel, move1 string, move2 string, mode string, db *sql.DB) {
 
 	msg := fmt.Sprintf("Введите номер набора для %s", move1)
 	gBot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, msg))
@@ -192,18 +184,50 @@ func AddOrDeleteSet(update *tgbotapi.Update, updates tgbotapi.UpdatesChannel, mo
 			return
 
 		default:
-			fmt.Print(update.Message.Text)
-			API_Connect(update.Message.Text, mode, db, tablename)
-			PartMerger(db, tablename)
-			gBot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, move2))
+			UpdateSetCommand(&update, updates, move1, move2, mode, db)
 			return
 		}
 	}
 }
 
+func UpdateSetCommand(update *tgbotapi.Update, updates tgbotapi.UpdatesChannel, move1 string, move2 string, mode string, db *sql.DB) {
+	if mode == "delete" && !BeforeDeleteCheck(update) {
+		gBot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Такого набора в инвентаре нет"))
+		return
+	} else {
+		tablename = fmt.Sprintf("InventoryTable_%d", update.Message.Chat.ID)
+		check := API_Connect(update.Message.Text, mode, db, tablename)
+		switch check {
+		case 0:
+			gBot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Неверный номер набора"))
+			return
+		default:
+			PartMerger(db, tablename)
+			tablename = fmt.Sprintf("SetHistoryTable_%d", update.Message.Chat.ID)
+			UpdateSetWindowHistory(db, tablename, update.Message.Text, 1, mode)
+			SetHistoryMerger(db, tablename)
+			gBot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, move2))
+			return
+		}
+
+	}
+}
+
+func BeforeDeleteCheck(update *tgbotapi.Update) bool {
+	tablename = fmt.Sprintf("SetHistoryTable_%d", update.Message.Chat.ID)
+	query := fmt.Sprintf("SELECT quantity FROM %s WHERE setnum = '%s'", tablename, update.Message.Text)
+	var quantity int
+	err = db.QueryRow(query).Scan(&quantity)
+	if quantity > 0 {
+		return true
+	} else {
+		return false
+	}
+}
+
 func DatabaseConnect() (*sql.DB, error) {
 	fmt.Println(database, username, password, server, port)
-	connStr := fmt.Sprintf("%s://%s:%s@%s:%s/lego?sslmode=disable", database, username, password, server, port)
+	connStr := fmt.Sprintf("%s://%s:%s@%s:%s/Lego?sslmode=disable", database, username, password, server, port)
 	db, err = sql.Open(driverName, connStr)
 	fmt.Println(db)
 
@@ -214,16 +238,67 @@ func DatabaseConnect() (*sql.DB, error) {
 }
 
 func TGBotConnect() error {
-	fmt.Println("2")
 	_ = os.Setenv(TOKEN_NAME_IN_OS, "6842123718:AAGAhkDOdqUMTLuCzo4CkzPxXzpNil4VMj8")
-	fmt.Println("3")
 	gToken = os.Getenv(TOKEN_NAME_IN_OS)
-	fmt.Println("4")
-
-	// gBot.Debug = false
-	fmt.Println("5")
 	if err != nil {
 		return err
 	}
 	return nil
+}
+
+func CreateSetHistory(db *sql.DB, tablename string) error {
+	query := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s(
+		setnum character varying(50) COLLATE pg_catalog."default" NOT NULL,
+		quantity smallint NOT NULL
+	)`, tablename)
+
+	_, err := db.Exec(query)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func UpdateSetWindowHistory(db *sql.DB, tablename string, setnum string, quantity int, mode string) {
+	query := fmt.Sprintf(`INSERT INTO %s(setnum, quantity)
+		VALUES ($1, $2) RETURNING setnum`, tablename)
+
+	if mode == "delete" {
+		quantity = -quantity
+	}
+	_, err := db.Exec(query, setnum, quantity)
+
+	if err != nil {
+		log.Panic(err)
+	}
+}
+
+func SetHistoryMerger(db *sql.DB, tablename string) {
+	query := fmt.Sprintf(`DROP TABLE IF EXISTS public.%s_switch;
+	CREATE TABLE IF NOT EXISTS public.%s_switch 
+	(
+    setnum character varying(50) COLLATE pg_catalog."default" NOT NULL,
+    quantity smallint NOT NULL
+	)
+	TABLESPACE pg_default;
+	INSERT INTO %s_switch(setnum, quantity)
+	(
+	SELECT 
+	  setnum,
+	  SUM (quantity) AS quantity
+	FROM 
+	  %s	 
+	GROUP BY 
+	  setnum 
+	ORDER BY 
+  	  setnum);
+	truncate %s;
+	INSERT INTO %s(setnum, quantity)(select * from %s_switch);
+	DROP TABLE IF EXISTS public.%s_switch;`, tablename, tablename, tablename, tablename, tablename, tablename, tablename, tablename)
+
+	_, err := db.Exec(query)
+
+	if err != nil {
+		log.Panic(err)
+	}
 }
